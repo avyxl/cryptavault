@@ -1,0 +1,1368 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>cryptavault // secure local storage</title>
+    
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@300;400;500;600&display=swap" rel="stylesheet">
+    
+    <!-- Client-Side AES-256 Engine -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+
+    <style>
+        :root {
+            --bg: #030303;
+            --surface: #0a0a0a;
+            --border: rgba(255, 255, 255, 0.08);
+            --border-glow: rgba(255, 255, 255, 0.25);
+            --text-main: #ffffff;
+            --text-muted: #737373;
+            --text-dim: #404040;
+            --danger: #ef4444;
+            --font-sans: 'Inter', sans-serif;
+            --font-mono: 'JetBrains Mono', monospace;
+            --glow: 0 0 20px rgba(255, 255, 255, 0.15);
+            --glow-strong: 0 0 30px rgba(255, 255, 255, 0.4);
+            --transition-smooth: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            -webkit-font-smoothing: antialiased;
+            text-rendering: optimizeLegibility;
+        }
+
+        body {
+            background-color: var(--bg);
+            color: var(--text-main);
+            font-family: var(--font-sans);
+            font-size: 13px;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow-x: hidden;
+            text-transform: lowercase;
+        }
+
+        ::-webkit-scrollbar { width: 3px; height: 3px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: var(--text-dim); }
+        ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+        @keyframes slideUpFade {
+            0% { opacity: 0; transform: translateY(15px); }
+            100% { opacity: 1; transform: translateY(0); }
+        }
+
+        @keyframes pulseGlow {
+            0% { text-shadow: 0 0 10px rgba(255,255,255,0.2); }
+            50% { text-shadow: 0 0 25px rgba(255,255,255,0.6); }
+            100% { text-shadow: 0 0 10px rgba(255,255,255,0.2); }
+        }
+
+        .anim-stagger { opacity: 0; animation: slideUpFade 0.7s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+        .delay-1 { animation-delay: 0.1s; }
+        .delay-2 { animation-delay: 0.2s; }
+        .delay-3 { animation-delay: 0.3s; }
+        .delay-4 { animation-delay: 0.4s; }
+
+        /* --- BACKGROUND CANVAS --- */
+        #interactive-bg {
+            position: fixed;
+            top: 0; left: 0;
+            width: 100vw; height: 100vh;
+            z-index: 0;
+            pointer-events: none;
+        }
+
+        .wrapper {
+            width: 100%; max-width: 1240px;
+            margin: 0 auto; padding: 48px 32px;
+            position: relative; z-index: 1;
+            display: flex; flex-direction: column; gap: 32px;
+        }
+
+        /* --- HEADER --- */
+        header {
+            display: flex; justify-content: space-between; align-items: flex-end;
+            padding-bottom: 24px; border-bottom: 1px solid var(--border);
+        }
+
+        .brand { display: flex; align-items: center; gap: 16px; }
+        
+        .brand-icon {
+            width: 40px; height: 40px;
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 8px;
+            display: flex; align-items: center; justify-content: center;
+            background: linear-gradient(135deg, rgba(255,255,255,0.1) 0%, transparent 100%);
+            box-shadow: var(--glow);
+        }
+
+        .brand-icon svg {
+            width: 20px; height: 20px;
+            stroke: var(--text-main); stroke-width: 1.5; fill: none;
+        }
+
+        .greeting {
+            font-size: 22px; font-weight: 500;
+            letter-spacing: -0.5px; display: flex; gap: 8px;
+        }
+
+        .name-glow {
+            font-family: var(--font-mono); font-weight: 600;
+            animation: pulseGlow 4s infinite ease-in-out;
+        }
+
+        /* --- WIDGETS ROW --- */
+        .widgets-grid {
+            display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px;
+        }
+
+        @media(max-width: 900px) { .widgets-grid { grid-template-columns: repeat(2, 1fr); } }
+
+        .widget {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px; padding: 20px;
+            display: flex; flex-direction: column; gap: 12px;
+            backdrop-filter: blur(16px);
+            transition: var(--transition-smooth);
+        }
+
+        .widget:hover {
+            border-color: var(--border-glow);
+            box-shadow: 0 4px 20px rgba(0,0,0,0.5), var(--glow);
+            transform: translateY(-2px);
+        }
+
+        .widget-header {
+            display: flex; justify-content: space-between; align-items: center;
+            font-size: 11px; color: var(--text-muted); letter-spacing: 0.5px;
+        }
+
+        .widget-header svg {
+            width: 14px; height: 14px; stroke: var(--text-muted); stroke-width: 1.5; fill: none;
+        }
+
+        .widget-content {
+            font-family: var(--font-mono); font-size: 18px; font-weight: 500; color: var(--text-main);
+        }
+
+        .widget-sub { font-size: 11px; color: var(--text-dim); }
+
+        .note-area {
+            background: transparent; border: none; color: var(--text-main);
+            font-family: var(--font-mono); font-size: 12px;
+            resize: none; width: 100%; height: 48px; outline: none; line-height: 1.5;
+        }
+        .note-area::placeholder { color: var(--text-dim); }
+
+        /* --- BUTTONS & INPUTS --- */
+        button, input, textarea { font-family: var(--font-sans); }
+
+        .btn {
+            background: transparent; border: 1px solid var(--border);
+            color: var(--text-main); padding: 10px 18px; border-radius: 6px;
+            font-size: 12px; font-weight: 500; cursor: pointer;
+            transition: var(--transition-smooth);
+            display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+        }
+
+        .btn:hover:not(:disabled) {
+            border-color: var(--text-main); background: rgba(255,255,255,0.03); box-shadow: var(--glow);
+        }
+
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        .btn-solid {
+            background: var(--text-main); color: #000;
+            border: 1px solid var(--text-main); font-weight: 600;
+        }
+
+        .btn-solid:hover:not(:disabled) {
+            background: transparent; color: var(--text-main); box-shadow: var(--glow-strong);
+        }
+
+        .btn-icon { padding: 8px; }
+        .btn-icon svg { width: 14px; height: 14px; stroke: currentColor; stroke-width: 2; fill: none; }
+
+        input[type="text"], input[type="password"] {
+            background: #000; border: 1px solid var(--border);
+            color: var(--text-main); padding: 12px 16px; border-radius: 6px;
+            width: 100%; font-size: 13px; transition: var(--transition-smooth);
+        }
+        input:focus { border-color: rgba(255,255,255,0.5); box-shadow: 0 0 15px rgba(255,255,255,0.1); }
+        input:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        .input-group { display: flex; flex-direction: column; gap: 8px; width: 100%; text-align: left; }
+        .input-group label { font-size: 11px; color: var(--text-muted); }
+
+        /* --- MAIN DASHBOARD LAYOUT --- */
+        .layout { display: grid; grid-template-columns: 340px 1fr; gap: 24px; align-items: start; }
+        @media(max-width: 900px) { .layout { grid-template-columns: 1fr; } }
+
+        .panel {
+            background: var(--surface); border: 1px solid var(--border);
+            border-radius: 12px; padding: 28px; display: flex; flex-direction: column;
+            gap: 24px; backdrop-filter: blur(16px);
+        }
+
+        .panel-header {
+            font-size: 12px; font-weight: 600; color: var(--text-muted);
+            border-bottom: 1px solid var(--border); padding-bottom: 16px;
+            display: flex; justify-content: space-between; align-items: center;
+            letter-spacing: 1px; text-transform: uppercase;
+        }
+
+        /* --- GENERATOR --- */
+        .checkbox-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+        .checkbox-label {
+            display: flex; align-items: center; gap: 10px; font-size: 11px; color: var(--text-muted); cursor: pointer;
+        }
+        .checkbox-label input { accent-color: var(--text-main); width: 14px; height: 14px; cursor: pointer; }
+
+        input[type="range"] {
+            -webkit-appearance: none; width: 100%; height: 2px;
+            background: var(--border); outline: none; margin-top: 8px;
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none; width: 14px; height: 14px;
+            background: var(--text-main); border-radius: 50%; cursor: pointer;
+            box-shadow: 0 0 10px rgba(255,255,255,0.5);
+        }
+
+        /* --- VAULT LIST --- */
+        .vault-controls { display: flex; gap: 12px; margin-bottom: 8px; }
+        .credential-list {
+            display: flex; flex-direction: column; gap: 8px;
+            max-height: 520px; overflow-y: auto; padding-right: 4px;
+        }
+        .credential-row {
+            background: #000; border: 1px solid var(--border); border-radius: 8px;
+            padding: 16px 20px; display: grid; grid-template-columns: 1.5fr 1.5fr 1fr auto;
+            gap: 16px; align-items: center; transition: var(--transition-smooth);
+        }
+        .credential-row:hover {
+            border-color: rgba(255,255,255,0.2);
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5), inset 0 0 10px rgba(255,255,255,0.02);
+            transform: translateX(4px);
+        }
+        .cred-data { font-family: var(--font-mono); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-main); }
+        .cred-label { font-size: 10px; color: var(--text-dim); margin-bottom: 6px; }
+
+        /* --- LOCKSCREEN & MODALS --- */
+        .overlay {
+            position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+            background: rgba(3, 3, 3, 0.85); backdrop-filter: blur(24px);
+            z-index: 2000; display: flex; justify-content: center; align-items: center;
+            opacity: 1; transition: opacity 0.6s ease;
+        }
+
+        .modal-box {
+            background: var(--surface); border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 16px; padding: 48px; width: 100%; max-width: 420px;
+            display: flex; flex-direction: column; gap: 24px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.8), var(--glow);
+            transform: translateY(0); transition: transform 0.6s ease;
+        }
+
+        .modal-title { font-family: var(--font-mono); font-size: 20px; font-weight: 500; text-align: center; }
+        .modal-desc { font-size: 12px; color: var(--text-muted); text-align: center; line-height: 1.5; margin-bottom: 8px; }
+
+        #toast {
+            position: fixed; bottom: 32px; right: 32px;
+            background: var(--text-main); color: #000;
+            padding: 14px 24px; border-radius: 6px; font-size: 12px; font-weight: 600;
+            z-index: 3000; transform: translateY(100px); opacity: 0; transition: var(--transition-smooth);
+        }
+        #toast.show { transform: translateY(0); opacity: 1; }
+
+        footer {
+            margin-top: 40px; padding-top: 24px; border-top: 1px solid var(--border);
+            display: flex; justify-content: space-between; font-size: 11px; color: var(--text-dim);
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Animated Scrolling Canvas -->
+    <canvas id="interactive-bg"></canvas>
+
+    <div id="toast">action completed</div>
+
+    <!-- file picker lives at root so it works from lock screen AND dashboard -->
+    <input type="file" id="importFile" tabindex="-1" aria-hidden="true" style="position:fixed; left:0; top:0; width:1px; height:1px; opacity:0; pointer-events:none;" onchange="importVault(event)">
+
+    <!-- IN-PAGE DIALOG (native alert/confirm are blocked in sandboxed iframes/previews) -->
+    <div class="overlay" id="dialogOverlay" style="display:none; z-index:4000;">
+        <div class="modal-box" style="padding:32px; max-width:400px; gap:20px;">
+            <div class="modal-title" id="dialogTitle" style="text-align:left; font-size:16px;"></div>
+            <div class="modal-desc" id="dialogMsg" style="text-align:left; margin:0; text-transform:none; line-height:1.6;"></div>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;" id="dialogBtns">
+                <button class="btn" id="dialogCancel"></button>
+                <button class="btn btn-solid" id="dialogOk"></button>
+            </div>
+        </div>
+    </div>
+
+    <!-- STARTUP LOCKSCREEN -->
+    <div class="overlay" id="lockScreen">
+        <div class="modal-box" id="lockModal">
+            
+            <div style="text-align: center; margin-bottom: 8px;">
+                <div class="brand-icon" style="margin: 0 auto 16px auto; width: 48px; height: 48px;">
+                    <svg viewBox="0 0 24 24" style="width:24px; height:24px;"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+                </div>
+                <div class="modal-title" id="lockTitle">authenticate</div>
+            </div>
+            
+            <div class="modal-desc" id="lockDesc">establish local secure context</div>
+            
+            <!-- Setup Identity -->
+            <div class="input-group" id="setupNameGroup" style="display: none;">
+                <label>identity (name)</label>
+                <input type="text" id="setupNameInput" placeholder="e.g. adam" style="text-transform:none;">
+            </div>
+
+            <!-- PIN Input -->
+            <div class="input-group">
+                <label id="pinLabel">master pin</label>
+                <input type="password" id="masterPin" style="text-align:center; font-family:var(--font-mono); letter-spacing:8px; font-size:16px;" placeholder="••••••••" onkeydown="if(event.key === 'Enter') handleAuth()">
+            </div>
+
+            <div id="lockError" style="color: var(--danger); font-size: 11px; text-align: center; display: none;"></div>
+
+            <button class="btn btn-solid" style="padding: 14px; margin-top:8px;" onclick="handleAuth()" id="lockBtn">decrypt storage</button>
+            <button class="btn" style="padding:10px;" onclick="document.getElementById('importFile').click()">import backup (.enc)</button>
+        </div>
+    </div>
+
+    <!-- MAIN APPLICATION -->
+    <div class="wrapper" id="mainDashboard" style="display:none;">
+        
+        <!-- HEADER -->
+        <header class="anim-stagger delay-1">
+            <div class="brand">
+                <div class="brand-icon"><svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg></div>
+                <div class="greeting">
+                    good evening, <span class="name-glow" id="userNameDisplay">user</span>.
+                </div>
+            </div>
+            <div style="display:flex; gap:12px;">
+                <button class="btn btn-icon" id="sfxBtn" title="sound effects: on" onclick="toggleSfx()">
+                    <svg viewBox="0 0 24 24" id="sfxIcon"></svg>
+                </button>
+                <button class="btn btn-icon" id="kbBtn" title="typing sounds: on" onclick="toggleKb()">
+                    <svg viewBox="0 0 24 24" id="kbIcon"></svg>
+                </button>
+                <button class="btn btn-icon" title="lock session" onclick="lockVault()">
+                    <svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+                </button>
+            </div>
+        </header>
+
+        <!-- WIDGETS -->
+        <div class="widgets-grid anim-stagger delay-2">
+            <div class="widget">
+                <div class="widget-header">
+                    <span>chronos</span>
+                    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                </div>
+                <div>
+                    <div class="widget-content" id="clockDisplay">00:00:00</div>
+                    <div class="widget-sub" id="dateDisplay">--/--/----</div>
+                </div>
+            </div>
+            
+            <div class="widget">
+                <div class="widget-header">
+                    <span>atmos</span>
+                    <svg viewBox="0 0 24 24"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/></svg>
+                </div>
+                <div>
+                    <div class="widget-content" id="weatherTemp">-- °c</div>
+                    <div class="widget-sub" id="locationDisplay">locating...</div>
+                </div>
+            </div>
+
+            <div class="widget">
+                <div class="widget-header">
+                    <span>telemetry</span>
+                    <svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                </div>
+                <div>
+                    <div class="widget-content" id="timerDisplay">3:00</div>
+                    <div class="widget-sub">idle auto-lock timer</div>
+                </div>
+            </div>
+
+            <div class="widget">
+                <div class="widget-header">
+                    <span>cipher-pad</span>
+                    <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+                </div>
+                <textarea class="note-area" id="quickNote" placeholder="temporary encrypted notes..." oninput="saveNoteTemp()"></textarea>
+            </div>
+        </div>
+
+        <div class="layout">
+            
+            <!-- SIDEBAR -->
+            <div style="display:flex; flex-direction:column; gap:24px;" class="anim-stagger delay-3">
+                
+                <div class="panel">
+                    <div class="panel-header">entropy engine</div>
+                    
+                    <div style="display:flex; flex-direction:column; gap:16px;">
+                        <div style="display:flex; gap:8px;">
+                            <input type="text" id="genOutput" readonly style="font-family:var(--font-mono); letter-spacing:1px; color:var(--text-main);" placeholder="---">
+                            <button class="btn btn-icon" onclick="copyGenPassword()" title="copy">
+                                <svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                            </button>
+                        </div>
+
+                        <div style="display:flex; flex-direction:column; gap:8px;">
+                            <div style="display:flex; justify-content:space-between; font-size:11px; color:var(--text-muted);">
+                                <span>length parameter</span>
+                                <span id="lengthVal" style="font-family:var(--font-mono); color:var(--text-main);">16</span>
+                            </div>
+                            <input type="range" id="lengthSlider" min="12" max="64" value="16" oninput="document.getElementById('lengthVal').innerText = this.value; generatePassword();">
+                        </div>
+
+                        <div class="checkbox-grid">
+                            <label class="checkbox-label"><input type="checkbox" id="cbUpper" checked onchange="generatePassword()"> A-Z</label>
+                            <label class="checkbox-label"><input type="checkbox" id="cbLower" checked onchange="generatePassword()"> a-z</label>
+                            <label class="checkbox-label"><input type="checkbox" id="cbNum" checked onchange="generatePassword()"> 0-9</label>
+                            <label class="checkbox-label"><input type="checkbox" id="cbSym" checked onchange="generatePassword()"> !@#$</label>
+                        </div>
+                        
+                        <button class="btn btn-solid" style="width:100%; margin-top:8px;" onclick="generatePassword(); sfx('synth')">synthesize</button>
+                    </div>
+                </div>
+
+                <div class="panel">
+                    <div class="panel-header">system logic</div>
+                    <div style="display:flex; flex-direction:column; gap:12px;">
+                        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+                            <button class="btn" onclick="exportVault()" title="download encrypted backup">export .enc</button>
+                            <button class="btn" onclick="document.getElementById('importFile').click()" title="restore from encrypted backup">import .enc</button>
+                        </div>
+                        <button class="btn" style="border-color: rgba(239, 68, 68, 0.2); color: var(--danger);" onclick="triggerSelfDestruct()">factory wipe data</button>
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- VAULT LIST -->
+            <div class="panel anim-stagger delay-4">
+                <div class="panel-header">
+                    <span>secure index</span>
+                    <span style="font-size: 10px; font-weight:400;">records: <span id="entryCount" style="color:var(--text-main); font-family:var(--font-mono);">0</span></span>
+                </div>
+                
+                <div class="vault-controls">
+                    <input type="text" id="searchInput" placeholder="search targets..." style="flex:1;" oninput="renderVault()">
+                    <button class="btn btn-solid" onclick="openModal()">+ append data</button>
+                </div>
+
+                <div class="credential-list" id="vaultList">
+                    <!-- Javascript populates this -->
+                </div>
+            </div>
+
+        </div>
+
+        <footer class="anim-stagger delay-4">
+            <span>cryptavault // purely local execution</span>
+            <span>crypto-js // pbkdf2-sha256 + aes-256-cbc</span>
+        </footer>
+    </div>
+
+    <!-- CREDENTIAL MODAL OVERLAY -->
+    <div class="overlay" id="entryModal" style="display: none; z-index: 2500;">
+        <div class="modal-box" style="padding: 32px; max-width: 400px; transform: scale(0.95); transition: transform 0.3s ease;">
+            <div class="panel-header" id="modalTitle" style="border-bottom:none; padding-bottom:0; font-size:16px; font-family:var(--font-mono);">append record</div>
+            <input type="hidden" id="editIndex" value="-1">
+            
+            <div class="input-group" style="margin-top:16px;">
+                <label>target domain / application</label>
+                <input type="text" id="entryService" placeholder="e.g. github.com">
+            </div>
+
+            <div class="input-group">
+                <label>identity handle / email</label>
+                <input type="text" id="entryUsername" style="text-transform:none;" placeholder="e.g. user@mail.com">
+            </div>
+
+            <div class="input-group">
+                <label>cryptographic secret</label>
+                <div style="display:flex; gap:8px;">
+                    <input type="password" id="entryPassword" style="text-transform:none; font-family:var(--font-mono);" placeholder="secret...">
+                    <button class="btn btn-icon" onclick="fillModalFromGen()">
+                        <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                    </button>
+                </div>
+            </div>
+
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top: 24px;">
+                <button class="btn" onclick="closeModal()">abort</button>
+                <button class="btn btn-solid" onclick="saveEntry()">commit</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        /** GLOBAL STATE */
+        let activeKey = null;
+        let vaultData = { credentials: [], notes: "" };
+        let clipboardTimeout = null;
+        
+        /** BRUTE FORCE LOCKOUT SYSTEM */
+        let failedAttempts = parseInt(localStorage.getItem('cv_v4_fails') || '0');
+        
+        function checkLockout() {
+            const lockoutEnd = parseInt(localStorage.getItem('cv_v4_lockout') || '0');
+            const now = Date.now();
+            const pinInput = document.getElementById('masterPin');
+            const lockBtn = document.getElementById('lockBtn');
+            const errBox = document.getElementById('lockError');
+
+            if (now < lockoutEnd) {
+                const remaining = Math.ceil((lockoutEnd - now) / 1000);
+                pinInput.disabled = true;
+                lockBtn.disabled = true;
+                errBox.innerText = `security breach detected. hardware locked for ${remaining}s.`;
+                errBox.style.display = 'block';
+                setTimeout(checkLockout, 1000);
+            } else {
+                pinInput.disabled = false;
+                lockBtn.disabled = false;
+                if(failedAttempts >= 5) {
+                    errBox.style.display = 'none';
+                    localStorage.setItem('cv_v4_fails', '0');
+                    localStorage.setItem('cv_v4_lockout', '0');
+                    failedAttempts = 0;
+                }
+            }
+        }
+
+        /** IDLE AUTO-LOCK */
+        const MAX_IDLE_SECONDS = 180;
+        let timeRemaining = MAX_IDLE_SECONDS;
+        let timerInterval = null;
+
+        function startTimer() {
+            if(timerInterval) clearInterval(timerInterval);
+            timeRemaining = MAX_IDLE_SECONDS;
+            updateTimerDOM();
+            
+            timerInterval = setInterval(() => {
+                if(activeKey) {
+                    timeRemaining--;
+                    updateTimerDOM();
+                    if(timeRemaining > 0 && timeRemaining <= 5) sfx('warn');
+                    if(timeRemaining <= 0) {
+                        lockVault();
+                        showToast("session secured due to inactivity");
+                    }
+                }
+            }, 1000);
+        }
+
+        function resetTimer() {
+            if(activeKey) {
+                timeRemaining = MAX_IDLE_SECONDS;
+                updateTimerDOM();
+            }
+        }
+
+        function updateTimerDOM() {
+            const m = Math.floor(timeRemaining / 60);
+            const s = (timeRemaining % 60).toString().padStart(2, '0');
+            document.getElementById('timerDisplay').innerText = `${m}:${s}`;
+        }
+
+        window.addEventListener('mousemove', resetTimer);
+        window.addEventListener('keydown', resetTimer);
+        window.addEventListener('click', resetTimer);
+        window.addEventListener('touchstart', resetTimer, {passive:true});
+        window.addEventListener('scroll', resetTimer, true);
+        window.addEventListener('keydown', e => {
+            if(e.key === 'Escape' && document.getElementById('entryModal').style.display === 'flex') closeModal();
+        });
+
+        /** WIDGETS */
+        let widgetsStarted = false;
+        function initWidgets() {
+            if(widgetsStarted) return;
+            widgetsStarted = true;
+            // Time & Greeting
+            setInterval(() => {
+                const now = new Date();
+                document.getElementById('clockDisplay').innerText = now.toLocaleTimeString('en-US', { hour12: false });
+                document.getElementById('dateDisplay').innerText = now.toLocaleDateString();
+                
+                const hr = now.getHours();
+                let greet = "good evening,";
+                if (hr < 12) greet = "good morning,";
+                else if (hr < 18) greet = "good afternoon,";
+                
+                const savedName = localStorage.getItem('cv_v4_name') || "user";
+                const nameSpan = `<span class="name-glow" id="userNameDisplay">${escapeHtml(savedName)}</span>.`;
+                document.querySelector('.greeting').innerHTML = `${greet} ${nameSpan}`;
+            }, 1000);
+
+            // Weather Tracking
+            fetch('https://get.geojs.io/v1/ip/geo.json')
+                .then(res => res.json())
+                .then(geo => {
+                    document.getElementById('locationDisplay').innerText = geo.city || "active node";
+                    return fetch(`https://api.open-meteo.com/v1/forecast?latitude=${geo.latitude}&longitude=${geo.longitude}&current_weather=true`);
+                })
+                .then(res => res.json())
+                .then(data => {
+                    document.getElementById('weatherTemp').innerText = data.current_weather ? `${data.current_weather.temperature} °c` : '--';
+                })
+                .catch(() => {
+                    document.getElementById('locationDisplay').innerText = "offline";
+                    document.getElementById('weatherTemp').innerText = "--";
+                });
+        }
+
+        /** CANVAS BACKGROUND (Diagonal Drift + Mouse Reaction) */
+        const canvas = document.getElementById('interactive-bg');
+        const ctx = canvas.getContext('2d');
+        let mouseX = -1000, mouseY = -1000;
+        let driftOffset = 0;
+
+        window.addEventListener('mousemove', (e) => { mouseX = e.clientX; mouseY = e.clientY; });
+        window.addEventListener('resize', resizeCanvas);
+        
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        resizeCanvas();
+
+        function drawMatrix() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            const spacing = 40;
+            
+            // Constantly scroll diagonally
+            driftOffset = (driftOffset + 0.3) % spacing;
+            
+            for(let x = -spacing; x < canvas.width + spacing; x += spacing) {
+                for(let y = -spacing; y < canvas.height + spacing; y += spacing) {
+                    
+                    const drawX = x + driftOffset;
+                    const drawY = y + driftOffset;
+                    
+                    const dx = drawX - mouseX;
+                    const dy = drawY - mouseY;
+                    const dist = Math.sqrt(dx*dx + dy*dy);
+                    
+                    let size = 1;
+                    let alpha = 0.05;
+                    
+                    if(dist < 200) {
+                        const intensity = 1 - (dist / 200);
+                        size = 1 + (intensity * 2);
+                        alpha = 0.05 + (intensity * 0.5);
+                    }
+
+                    ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
+                    ctx.beginPath();
+                    ctx.arc(drawX, drawY, size, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+            requestAnimationFrame(drawMatrix);
+        }
+        drawMatrix();
+
+        /** SOUND EFFECTS (synthesized with Web Audio: no files, works offline) */
+        let sfxOn = true, kbOn = true;
+        try {
+            sfxOn = localStorage.getItem('cv_v4_sfx') !== '0';
+            kbOn  = localStorage.getItem('cv_v4_kbfx') !== '0';
+        } catch(e) {}
+
+        let audioCtx = null, dryIn = null, fxIn = null, noiseBuf = null;
+
+        function getAudio() {
+            if(!audioCtx) {
+                const AC = window.AudioContext || window.webkitAudioContext;
+                if(!AC) return null;
+                const ac = audioCtx = new AC();
+
+                // master bus: compressor -> out. "fx" sends also feed a soft filtered echo for a polished tail.
+                const comp = ac.createDynamicsCompressor();
+                comp.threshold.value = -20; comp.ratio.value = 4; comp.attack.value = 0.003; comp.release.value = 0.12;
+                const out = ac.createGain(); out.gain.value = 0.95;
+                comp.connect(out); out.connect(ac.destination);
+
+                dryIn = ac.createGain(); dryIn.connect(comp);
+                fxIn  = ac.createGain(); fxIn.connect(comp);
+                const delay = ac.createDelay(0.5); delay.delayTime.value = 0.13;
+                const fb = ac.createGain(); fb.gain.value = 0.28;
+                const wet = ac.createGain(); wet.gain.value = 0.22;
+                const damp = ac.createBiquadFilter(); damp.type = 'lowpass'; damp.frequency.value = 3800;
+                fxIn.connect(delay); delay.connect(damp); damp.connect(fb); fb.connect(delay); damp.connect(wet); wet.connect(comp);
+
+                // 1s of white noise reused for every click/whoosh
+                noiseBuf = ac.createBuffer(1, ac.sampleRate, ac.sampleRate);
+                const d = noiseBuf.getChannelData(0);
+                for(let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+            }
+            if(audioCtx.state === 'suspended') audioCtx.resume();
+            return audioCtx;
+        }
+
+        /** pitched voice: tone(freq, delaySec, durSec, {type, vol, to(slide target), lp(lowpass), fx(echo send)}) */
+        function tone(freq, delay, dur, opts = {}) {
+            const ac = getAudio(); if(!ac) return;
+            const { type = 'sine', vol = 0.05, to = null, lp = null, fx = true } = opts;
+            const t0 = ac.currentTime + delay, t1 = t0 + dur;
+            const osc = ac.createOscillator(), g = ac.createGain();
+            osc.type = type;
+            osc.frequency.setValueAtTime(freq, t0);
+            if(to) osc.frequency.exponentialRampToValueAtTime(to, t1);
+            g.gain.setValueAtTime(0.0001, t0);
+            g.gain.linearRampToValueAtTime(vol, t0 + 0.008);
+            g.gain.exponentialRampToValueAtTime(0.0001, t1);
+            let node = osc; osc.connect(g); node = g;
+            if(lp) { const f = ac.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = lp; node.connect(f); node = f; }
+            node.connect(fx ? fxIn : dryIn);
+            osc.start(t0); osc.stop(t1 + 0.03);
+        }
+
+        /** filtered noise voice: clicks, whooshes, swipes */
+        function noise(delay, dur, opts = {}) {
+            const ac = getAudio(); if(!ac) return;
+            const { vol = 0.03, freq = 3000, q = 1, sweepTo = null, type = 'bandpass', fx = false } = opts;
+            const t0 = ac.currentTime + delay, t1 = t0 + dur;
+            const src = ac.createBufferSource(); src.buffer = noiseBuf;
+            const f = ac.createBiquadFilter(); f.type = type; f.Q.value = q; f.frequency.setValueAtTime(freq, t0);
+            if(sweepTo) f.frequency.exponentialRampToValueAtTime(sweepTo, t1);
+            const g = ac.createGain();
+            g.gain.setValueAtTime(0.0001, t0);
+            g.gain.linearRampToValueAtTime(vol, t0 + Math.min(0.006, dur / 3));
+            g.gain.exponentialRampToValueAtTime(0.0001, t1);
+            src.connect(f); f.connect(g); g.connect(fx ? fxIn : dryIn);
+            src.start(t0, Math.random() * 0.4, dur + 0.05);
+        }
+
+        const PENTA = [523.25, 587.33, 659.25, 783.99, 880, 1046.5, 1174.66, 1318.5];
+
+        const SFX = {
+            // ui
+            tick:   () => { noise(0, 0.022, { vol: 0.03, freq: 4200, q: 1.3 }); tone(1500, 0, 0.03, { vol: 0.014, to: 950, fx: false }); },
+            hover:  () => tone(3400, 0, 0.018, { vol: 0.007, fx: false }),
+            open:   () => { noise(0, 0.2, { vol: 0.025, freq: 500, q: 0.8, sweepTo: 3600, fx: true }); tone(520, 0, 0.14, { vol: 0.03, to: 780, type: 'triangle' }); },
+            close:  () => { noise(0, 0.17, { vol: 0.022, freq: 3400, q: 0.8, sweepTo: 450, fx: true }); tone(700, 0, 0.12, { vol: 0.025, to: 430, type: 'triangle' }); },
+            pop:    () => { tone(560, 0, 0.09, { vol: 0.04, to: 920, type: 'triangle' }); noise(0, 0.03, { vol: 0.02, freq: 2500, q: 1 }); },
+            switchOn:  () => { noise(0, 0.02, { vol: 0.03, freq: 3600, q: 1.5 }); tone(1100, 0.01, 0.06, { vol: 0.035, to: 1500, fx: false }); },
+            switchOff: () => { noise(0, 0.02, { vol: 0.03, freq: 2400, q: 1.5 }); tone(900, 0.01, 0.06, { vol: 0.035, to: 600, fx: false }); },
+            slide:  (v = 0.5) => tone(380 + v * 1100, 0, 0.035, { vol: 0.02, type: 'triangle', fx: false }),
+            on:     () => { tone(784, 0, 0.1, { vol: 0.05, type: 'triangle' }); tone(1175, 0.07, 0.18, { vol: 0.04, type: 'triangle' }); },
+            off:    () => { tone(784, 0, 0.1, { vol: 0.045, type: 'triangle' }); tone(523, 0.07, 0.2, { vol: 0.04, type: 'triangle' }); },
+
+            // events
+            success: () => { tone(659, 0, 0.14, { vol: 0.05, type: 'triangle' }); tone(988, 0.08, 0.28, { vol: 0.05, type: 'triangle' }); tone(1318, 0.16, 0.4, { vol: 0.025 }); },
+            unlock:  () => {
+                noise(0, 0.38, { vol: 0.03, freq: 500, q: 0.7, sweepTo: 5200, fx: true });
+                [523, 659, 784, 1047, 1319].forEach((f, i) => tone(f, 0.06 + i * 0.065, 0.5, { vol: 0.038, type: 'triangle' }));
+                tone(262, 0.06, 0.7, { vol: 0.045 });
+            },
+            lock:    () => {
+                noise(0, 0.32, { vol: 0.03, freq: 4600, q: 0.7, sweepTo: 380, fx: true });
+                [1047, 784, 587, 392].forEach((f, i) => tone(f, i * 0.06, 0.3, { vol: 0.04, type: 'triangle' }));
+                tone(196, 0.22, 0.5, { vol: 0.05, to: 150 });
+            },
+            error:   () => { tone(200, 0, 0.13, { type: 'square', vol: 0.03, lp: 900, fx: false }); tone(150, 0.12, 0.22, { type: 'square', vol: 0.03, lp: 700, fx: false }); },
+            alarm:   () => [0, 0.16, 0.32].forEach(d => tone(740, d, 0.12, { type: 'square', vol: 0.03, lp: 2200, to: 520, fx: false })),
+            warn:    () => tone(1000, 0, 0.06, { type: 'square', vol: 0.022, lp: 2500, fx: false }),
+            delete:  () => { noise(0, 0.3, { vol: 0.035, freq: 3500, q: 0.8, sweepTo: 200, fx: true }); tone(440, 0, 0.3, { type: 'sawtooth', vol: 0.02, to: 60, lp: 1500 }); },
+            wipe:    () => noise(0, 0.35, { vol: 0.03, freq: 2800, q: 0.9, sweepTo: 250, fx: true }),
+            copy:    () => { tone(1300, 0, 0.05, { vol: 0.04 }); tone(1950, 0.045, 0.1, { vol: 0.04 }); },
+            synth:   () => { for(let i = 0; i < 5; i++) tone(PENTA[Math.floor(Math.random() * PENTA.length)] * (i % 2 ? 1 : 0.5), i * 0.045, 0.12, { type: 'triangle', vol: 0.035 }); }
+        };
+
+        function sfx(name, arg) {
+            if(!sfxOn) return;
+            try { SFX[name] && SFX[name](arg); } catch(e) {}
+        }
+
+        /** typing: soft mechanical-keyboard clicks, slightly randomised so it never sounds robotic */
+        function keySound(kind) {
+            const r = Math.random();
+            if(kind === 'space') {
+                noise(0, 0.05, { vol: 0.05, freq: 900 + r * 200, q: 0.8 });
+                tone(110 + r * 15, 0, 0.08, { vol: 0.05, to: 68, fx: false });
+            } else if(kind === 'back') {
+                noise(0, 0.03, { vol: 0.04, freq: 3200 + r * 600, q: 1.5 });
+                tone(270, 0, 0.045, { vol: 0.03, type: 'triangle', to: 170, fx: false });
+            } else if(kind === 'enter') {
+                noise(0, 0.055, { vol: 0.06, freq: 1500, q: 0.9 });
+                tone(140, 0, 0.1, { vol: 0.06, to: 58, fx: false });
+                tone(2300, 0.05, 0.035, { vol: 0.025, fx: false });
+            } else {
+                noise(0, 0.026, { vol: 0.035 + r * 0.01, freq: 2600 + r * 1800, q: 2 });
+                tone(170 + r * 60, 0, 0.04, { vol: 0.035, to: 100, fx: false });
+            }
+        }
+
+function renderSfxIcon() {
+            const icon = document.getElementById('sfxIcon'), btn = document.getElementById('sfxBtn');
+            if(!icon || !btn) return;
+            icon.innerHTML = '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>' + (sfxOn
+                ? '<path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>'
+                : '<line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/>');
+            btn.title = "sound effects: " + (sfxOn ? "on" : "off");
+        }
+
+        function renderKbIcon() {
+            const icon = document.getElementById('kbIcon'), btn = document.getElementById('kbBtn');
+            if(!icon || !btn) return;
+            icon.innerHTML = '<rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/>' + (kbOn ? '' : '<line x1="3" y1="3" x2="21" y2="21"/>');
+            btn.title = "typing sounds: " + (kbOn ? "on" : "off");
+            btn.style.opacity = sfxOn ? '1' : '0.5';
+        }
+
+        function toggleSfx() {
+            sfxOn = !sfxOn;
+            try { localStorage.setItem('cv_v4_sfx', sfxOn ? '1' : '0'); } catch(e) {}
+            renderSfxIcon(); renderKbIcon();
+            showToast(sfxOn ? "sound on" : "sound off");
+            sfx(sfxOn ? 'on' : 'off');
+            if(!sfxOn) { /* play 'off' even though muted so the toggle feels responsive */ try { SFX.off(); } catch(e) {} }
+        }
+
+        function toggleKb() {
+            kbOn = !kbOn;
+            try { localStorage.setItem('cv_v4_kbfx', kbOn ? '1' : '0'); } catch(e) {}
+            renderKbIcon();
+            showToast(kbOn ? "typing sounds on" : "typing sounds off");
+            if(sfxOn) sfx(kbOn ? 'switchOn' : 'switchOff');
+        }
+
+        // click tick on every button
+        document.addEventListener('click', e => {
+            const b = e.target.closest && e.target.closest('button');
+            if(b && !b.disabled && b.id !== 'sfxBtn' && b.id !== 'kbBtn') sfx('tick');
+        }, true);
+
+        // faint hover blip (mouse only, throttled)
+        let lastHover = 0;
+        document.addEventListener('mouseover', e => {
+            if(!sfxOn || !window.matchMedia('(hover: hover)').matches) return;
+            const el = e.target.closest && e.target.closest('button, .credential-row');
+            if(!el || el.disabled || (e.relatedTarget && el.contains(e.relatedTarget))) return;
+            const now = performance.now();
+            if(now - lastHover < 60) return;
+            lastHover = now; sfx('hover');
+        });
+
+        // typing sounds in text fields / the cipher-pad
+        let lastKey = 0;
+        document.addEventListener('keydown', e => {
+            if(!sfxOn || !kbOn || e.ctrlKey || e.metaKey || e.altKey) return;
+            const t = e.target;
+            if(!t || !(t.tagName === 'INPUT' || t.tagName === 'TEXTAREA') || t.readOnly) return;
+            if(['range', 'checkbox', 'file', 'hidden'].includes(t.type)) return;
+            const now = performance.now();
+            if(now - lastKey < 18) return;
+            let kind = null;
+            if(e.key === ' ') kind = 'space';
+            else if(e.key === 'Backspace' || e.key === 'Delete') kind = 'back';
+            else if(e.key === 'Enter') kind = 'enter';
+            else if(e.key.length === 1) kind = 'key';
+            if(!kind) return;
+            lastKey = now; keySound(kind);
+        }, true);
+
+        // checkboxes + slider
+        document.addEventListener('change', e => {
+            if(e.target.type === 'checkbox') sfx(e.target.checked ? 'switchOn' : 'switchOff');
+        });
+        let lastSlide = 0;
+        document.getElementById('lengthSlider').addEventListener('input', e => {
+            const now = performance.now();
+            if(now - lastSlide < 30) return;
+            lastSlide = now;
+            sfx('slide', (e.target.value - e.target.min) / (e.target.max - e.target.min));
+        });
+
+        renderSfxIcon(); renderKbIcon();
+
+        /** IN-PAGE DIALOGS */
+        function uiDialog({ title = "", message = "", confirmText = "ok", cancelText = "cancel", danger = false, alertOnly = false }) {
+            return new Promise(resolve => {
+                const ov = document.getElementById('dialogOverlay');
+                const ok = document.getElementById('dialogOk');
+                const cancel = document.getElementById('dialogCancel');
+                document.getElementById('dialogTitle').innerText = title;
+                document.getElementById('dialogMsg').innerText = message;
+                ok.innerText = confirmText;
+                cancel.innerText = cancelText;
+                cancel.style.display = alertOnly ? 'none' : '';
+                document.getElementById('dialogBtns').style.gridTemplateColumns = alertOnly ? '1fr' : '1fr 1fr';
+                ok.style.cssText = danger ? 'background:#ef4444; border-color:#ef4444; color:#fff;' : '';
+                ov.style.display = 'flex';
+                sfx('pop');
+                const done = (val) => {
+                    ov.style.display = 'none';
+                    ok.onclick = cancel.onclick = null;
+                    document.removeEventListener('keydown', onKey, true);
+                    resolve(val);
+                };
+                const onKey = (e) => { if(e.key === 'Escape') { e.stopPropagation(); done(false); } };
+                document.addEventListener('keydown', onKey, true);
+                ok.onclick = () => done(true);
+                cancel.onclick = () => done(false);
+                ok.focus();
+            });
+        }
+        const askConfirm = (title, message, confirmText, danger) => uiDialog({ title, message, confirmText, danger });
+        const showAlert = (title, message) => { sfx('error'); return uiDialog({ title, message, confirmText: "ok", alertOnly: true }); };
+
+        /** reset to lock screen without relying on location.reload() */
+        function resetToLock() {
+            activeKey = null;
+            vaultData = { credentials: [], notes: "" };
+            if(timerInterval) clearInterval(timerInterval);
+            failedAttempts = parseInt(localStorage.getItem('cv_v4_fails') || '0');
+            document.getElementById('quickNote').value = "";
+            document.getElementById('setupNameInput').value = "";
+            initAuthScreen();
+        }
+
+        /** TOAST / CLIPBOARD */
+        function showToast(msg) {
+            const t = document.getElementById('toast');
+            t.innerText = msg;
+            t.classList.add('show');
+            setTimeout(() => t.classList.remove('show'), 2500);
+        }
+
+        function legacyCopy(text) {
+            const ta = document.createElement('textarea');
+            ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+            document.body.appendChild(ta); ta.select();
+            let ok = false;
+            try { ok = document.execCommand('copy'); } catch(e) {}
+            ta.remove();
+            return ok;
+        }
+
+        function secureCopy(text) {
+            const armWipe = () => {
+                sfx('copy');
+                showToast("copied. clipboard wipes in 15s.");
+                if(clipboardTimeout) clearTimeout(clipboardTimeout);
+                clipboardTimeout = setTimeout(() => {
+                    const wiped = () => { sfx('wipe'); showToast("clipboard wiped"); };
+                    if(navigator.clipboard) navigator.clipboard.writeText(' ').then(wiped).catch(() => {});
+                    else if(legacyCopy(' ')) wiped();
+                }, 15000);
+            };
+            const fallback = () => { if(legacyCopy(text)) armWipe(); else showToast("copy blocked by browser"); };
+            if(navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(armWipe).catch(fallback);
+            else fallback();
+        }
+
+        function copyEntry(i) {
+            const c = vaultData.credentials[i];
+            if(c) secureCopy(c.password);
+        }
+
+        /** CRYPTO ENGINE */
+        function deriveKey(pin, saltHex) {
+            return CryptoJS.PBKDF2(pin, CryptoJS.enc.Hex.parse(saltHex), {
+                keySize: 256/32, iterations: 200000, hasher: CryptoJS.algo.SHA256
+            }).toString();
+        }
+
+        function encryptVault() {
+            if (!activeKey) return;
+            vaultData.notes = document.getElementById('quickNote').value;
+            const json = JSON.stringify(vaultData);
+            const encrypted = CryptoJS.AES.encrypt(json, activeKey).toString();
+            localStorage.setItem('cv_v4_data', encrypted);
+            document.getElementById('entryCount').innerText = vaultData.credentials.length;
+        }
+
+        /** AUTHENTICATION & ANIMATIONS */
+        window.onload = () => {
+            initAuthScreen();
+            generatePassword();
+        };
+
+        function initAuthScreen() {
+            checkLockout();
+            const hasData = localStorage.getItem('cv_v4_data') !== null;
+            
+            document.getElementById('masterPin').value = '';
+            document.getElementById('lockError').style.display = 'none';
+            document.getElementById('lockScreen').style.display = 'flex';
+            document.getElementById('lockScreen').style.opacity = '1';
+            document.getElementById('lockModal').style.transform = 'translateY(0)';
+            document.getElementById('mainDashboard').style.display = 'none';
+            setTimeout(() => document.getElementById('masterPin').focus(), 50);
+
+            if (!hasData) {
+                // SIGNUP MODE
+                document.getElementById('lockTitle').innerHTML = "initialize hardware storage";
+                document.getElementById('lockDesc').innerText = "create your local cryptographic identity and pin.";
+                document.getElementById('setupNameGroup').style.display = 'flex';
+                document.getElementById('pinLabel').innerText = "create master pin";
+                document.getElementById('lockBtn').innerText = "initialize vault";
+            } else {
+                // LOGIN MODE
+                const savedName = localStorage.getItem('cv_v4_name') || "user";
+                document.getElementById('lockTitle').innerHTML = `hello, <span class="name-glow">${escapeHtml(savedName)}</span>.`;
+                document.getElementById('lockDesc').innerText = "enter your master pin to decrypt your vault.";
+                document.getElementById('setupNameGroup').style.display = 'none';
+                document.getElementById('pinLabel').innerText = "master pin";
+                document.getElementById('lockBtn').innerText = "decrypt storage";
+            }
+        }
+
+        function handleAuth() {
+            const pin = document.getElementById('masterPin').value;
+            const err = document.getElementById('lockError');
+            err.style.display = 'none';
+            
+            if (!pin || pin.length < 4) {
+                sfx('error');
+                err.innerText = "pin must be at least 4 characters";
+                err.style.display = 'block';
+                return;
+            }
+
+            let salt = localStorage.getItem('cv_v4_salt');
+            if (!salt) {
+                salt = CryptoJS.lib.WordArray.random(16).toString();
+                localStorage.setItem('cv_v4_salt', salt);
+            }
+
+            const storedData = localStorage.getItem('cv_v4_data');
+
+            if (!storedData) {
+                // First time Setup
+                const nameInput = document.getElementById('setupNameInput').value.trim() || "user";
+                localStorage.setItem('cv_v4_name', nameInput);
+                
+                activeKey = deriveKey(pin, salt);
+                vaultData = { credentials: [], notes: "" };
+                encryptVault();
+                triggerUnlockAnimation();
+            } else {
+                // Decrypt Existing
+                const tempKey = deriveKey(pin, salt);
+                try {
+                    const bytes = CryptoJS.AES.decrypt(storedData, tempKey);
+                    const dec = bytes.toString(CryptoJS.enc.Utf8);
+                    if (!dec) throw new Error("bad pin");
+                    
+                    vaultData = JSON.parse(dec);
+                    if(!vaultData || typeof vaultData !== "object") vaultData = {};
+                    if(!Array.isArray(vaultData.credentials)) vaultData.credentials = [];
+                    if(typeof vaultData.notes !== "string") vaultData.notes = "";
+                    activeKey = tempKey;
+                    
+                    // Reset failed attempts on success
+                    localStorage.setItem('cv_v4_fails', '0');
+                    failedAttempts = 0;
+                    
+                    triggerUnlockAnimation();
+                } catch(e) {
+                    failedAttempts++;
+                    sfx('error');
+                    localStorage.setItem('cv_v4_fails', failedAttempts.toString());
+                    
+                    if (failedAttempts >= 5) {
+                        const lockUntil = Date.now() + 30000; // 30 second cooldown
+                        localStorage.setItem('cv_v4_lockout', lockUntil.toString());
+                        sfx('alarm');
+                        checkLockout();
+                    } else {
+                        err.innerText = `decryption failed. ${5 - failedAttempts} attempts remaining.`;
+                        err.style.display = 'block';
+                    }
+                }
+            }
+        }
+
+        function triggerUnlockAnimation() {
+            sfx('unlock');
+            const overlay = document.getElementById('lockScreen');
+            const modal = document.getElementById('lockModal');
+            
+            modal.style.transform = 'translateY(-20px)';
+            overlay.style.opacity = '0';
+            
+            setTimeout(() => {
+                overlay.style.display = 'none';
+                document.getElementById('mainDashboard').style.display = 'flex';
+                document.getElementById('quickNote').value = vaultData.notes || "";
+                
+                initWidgets();
+                startTimer();
+                renderVault();
+                showToast("decryption successful");
+            }, 600);
+        }
+
+        function lockVault() {
+            sfx('lock');
+            if(activeKey) encryptVault();
+            activeKey = null;
+            vaultData = { credentials: [], notes: "" };
+            document.getElementById('quickNote').value = "";
+            if(timerInterval) clearInterval(timerInterval);
+            initAuthScreen();
+        }
+
+        async function triggerSelfDestruct() {
+            const yes = await askConfirm("factory wipe", "this permanently destroys the vault, pin and name stored in this browser. export a backup first if you need one.", "wipe everything", true);
+            if(!yes) return;
+            try { localStorage.clear(); localStorage.setItem('cv_v4_sfx', sfxOn ? '1' : '0'); } catch(e) { await showAlert("wipe failed", "browser storage is not accessible."); return; }
+            sfx('delete');
+            showToast("all local data destroyed");
+            resetToLock();
+        }
+
+        let noteTimer = null;
+        function saveNoteTemp() {
+            if(!activeKey) return;
+            vaultData.notes = document.getElementById('quickNote').value;
+            clearTimeout(noteTimer);
+            noteTimer = setTimeout(() => { if(activeKey) encryptVault(); }, 800);
+        }
+
+        /** GENERATOR */
+        function generatePassword() {
+            const len = parseInt(document.getElementById('lengthSlider').value);
+            const u = document.getElementById('cbUpper').checked;
+            const l = document.getElementById('cbLower').checked;
+            const n = document.getElementById('cbNum').checked;
+            const s = document.getElementById('cbSym').checked;
+
+            let pool = "";
+            if(u) pool += "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+            if(l) pool += "abcdefghijklmnopqrstuvwxyz";
+            if(n) pool += "0123456789";
+            if(s) pool += "!@#$%^&*()_+-=[]{}|;:,.<>?";
+
+            if(!pool) {
+                document.getElementById('genOutput').value = "select parameters";
+                return;
+            }
+
+            let res = "";
+            const arr = new Uint32Array(1);
+            const lim = Math.floor(4294967296 / pool.length) * pool.length;
+            while(res.length < len) { window.crypto.getRandomValues(arr); if(arr[0] < lim) res += pool[arr[0] % pool.length]; }
+
+            document.getElementById('genOutput').value = res;
+        }
+
+        function copyGenPassword() {
+            const val = document.getElementById('genOutput').value;
+            if(val && val !== "select parameters") secureCopy(val);
+        }
+
+        function fillModalFromGen() {
+            const g = document.getElementById('genOutput').value;
+            if(!g || g === 'select parameters') { showToast('generate a password first'); return; }
+            document.getElementById('entryPassword').value = document.getElementById('genOutput').value;
+            document.getElementById('entryPassword').type = "text"; 
+        }
+
+        /** VAULT CRUD */
+        function renderVault() {
+            const container = document.getElementById('vaultList');
+            container.innerHTML = "";
+            const search = document.getElementById('searchInput').value.toLowerCase();
+
+            const creds = vaultData.credentials || [];
+            const sorted = [...creds].sort((a,b) => a.service.localeCompare(b.service));
+            const filtered = sorted.filter(i => i.service.toLowerCase().includes(search) || i.username.toLowerCase().includes(search));
+
+            if(filtered.length === 0) {
+                container.innerHTML = `<div style="padding:32px; text-align:center; color:var(--text-muted); font-size: 11px;">no records found</div>`;
+                document.getElementById('entryCount').innerText = creds.length;
+                return;
+            }
+
+            filtered.forEach(item => {
+                const rawIndex = creds.indexOf(item);
+                const row = document.createElement('div');
+                row.className = 'credential-row';
+                row.innerHTML = `
+                    <div>
+                        <div class="cred-label">target domain</div>
+                        <div class="cred-data">${escapeHtml(item.service)}</div>
+                    </div>
+                    <div>
+                        <div class="cred-label">identity</div>
+                        <div class="cred-data">${escapeHtml(item.username)}</div>
+                    </div>
+                    <div>
+                        <div class="cred-label">secret</div>
+                        <div class="cred-data">••••••••••••</div>
+                    </div>
+                    <div style="display:flex; gap:8px;">
+                        <button class="btn btn-icon" title="copy" onclick="copyEntry(${rawIndex})"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+                        <button class="btn btn-icon" title="edit" onclick="openModal(${rawIndex})"><svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></button>
+                        <button class="btn btn-icon" title="delete" style="border-color:var(--border);" onclick="deleteEntry(${rawIndex})"><svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
+                    </div>
+                `;
+                container.appendChild(row);
+            });
+            
+            document.getElementById('entryCount').innerText = creds.length;
+        }
+
+        function openModal(index = -1) {
+            sfx('open');
+            document.getElementById('editIndex').value = index;
+            document.getElementById('modalTitle').innerText = index > -1 ? "modify record" : "append record";
+            document.getElementById('entryPassword').type = "password";
+            
+            if(index > -1) {
+                document.getElementById('entryService').value = vaultData.credentials[index].service;
+                document.getElementById('entryUsername').value = vaultData.credentials[index].username;
+                document.getElementById('entryPassword').value = vaultData.credentials[index].password;
+            } else {
+                document.getElementById('entryService').value = "";
+                document.getElementById('entryUsername').value = "";
+                document.getElementById('entryPassword').value = "";
+            }
+            
+            const modal = document.getElementById('entryModal');
+            modal.style.display = 'flex';
+            setTimeout(() => {
+                modal.style.opacity = '1';
+                modal.querySelector('.modal-box').style.transform = 'scale(1)';
+            }, 10);
+        }
+
+        function closeModal(silent = false) {
+            if(!silent) sfx('close');
+            const modal = document.getElementById('entryModal');
+            modal.style.opacity = '0';
+            modal.querySelector('.modal-box').style.transform = 'scale(0.95)';
+            setTimeout(() => { modal.style.display = 'none'; }, 300);
+        }
+
+        function saveEntry() {
+            const index = parseInt(document.getElementById('editIndex').value);
+            const s = document.getElementById('entryService').value.trim();
+            const u = document.getElementById('entryUsername').value.trim();
+            const p = document.getElementById('entryPassword').value;
+
+            if(!s || !u || !p) { sfx('error'); showToast("all fields required"); return; }
+
+            if(index > -1) {
+                vaultData.credentials[index] = { service: s, username: u, password: p };
+                showToast("record modified");
+            } else {
+                vaultData.credentials.push({ service: s, username: u, password: p });
+                showToast("record stored");
+            }
+
+            encryptVault();
+            renderVault();
+            closeModal(true);
+            sfx('success');
+        }
+
+        async function deleteEntry(index) {
+            const c = vaultData.credentials[index];
+            if(!c) return;
+            const yes = await askConfirm("destroy record", `permanently delete the record for "${c.service}"?`, "destroy", true);
+            if(!yes) return;
+            vaultData.credentials.splice(index, 1);
+            encryptVault();
+            renderVault();
+            sfx('delete');
+            showToast("record destroyed");
+        }
+
+        /** IMPORT / EXPORT */
+        function exportVault() {
+            if(activeKey) encryptVault(); // flush latest notes/records first
+            const data = localStorage.getItem('cv_v4_data');
+            const salt = localStorage.getItem('cv_v4_salt');
+            const name = localStorage.getItem('cv_v4_name');
+            if(!data || !salt) { showToast("nothing to export"); return; }
+
+            const blob = new Blob([JSON.stringify({ v: 1, data, salt, name })], {type: "application/octet-stream"});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `vault_backup_${new Date().toISOString().replace(/[:.]/g, '-')}.enc`;
+            document.body.appendChild(a); a.click(); a.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 1500);
+            sfx('success');
+            showToast("encrypted export complete");
+        }
+
+        function importVault(event) {
+            const input = event.target;
+            const file = input.files && input.files[0];
+            if(!file) return;
+
+            const reader = new FileReader();
+            reader.onerror = () => { showAlert("import failed", "the file could not be read."); };
+            reader.onload = async function(e) {
+                let parsed;
+                try {
+                    parsed = JSON.parse(String(e.target.result).replace(/^\uFEFF/, '').trim());
+                    const okData = parsed && typeof parsed.data === 'string' && parsed.data.startsWith('U2FsdGVkX1');
+                    const okSalt = parsed && typeof parsed.salt === 'string' && /^[0-9a-f]{32}$/i.test(parsed.salt);
+                    if(!okData || !okSalt) throw new Error("bad format");
+                } catch(err) {
+                    await showAlert("invalid backup", "this is not a valid cryptavault .enc backup, or the file is corrupted.");
+                    return;
+                }
+
+                const hasExisting = localStorage.getItem('cv_v4_data') !== null;
+                const yes = await askConfirm(
+                    "restore backup?",
+                    (hasExisting ? "this will REPLACE the vault currently stored in this browser. " : "") +
+                    "the restored vault opens with the master pin it was created with.",
+                    "restore", hasExisting
+                );
+                if(!yes) return;
+
+                try {
+                    localStorage.setItem('cv_v4_data', parsed.data);
+                    localStorage.setItem('cv_v4_salt', parsed.salt);
+                    localStorage.setItem('cv_v4_name', (typeof parsed.name === 'string' && parsed.name.trim()) ? parsed.name.trim().slice(0, 40) : "user");
+                    localStorage.setItem('cv_v4_fails', '0');
+                    localStorage.setItem('cv_v4_lockout', '0');
+                } catch(err) {
+                    await showAlert("import failed", "browser storage is blocked or full, so the backup could not be saved.");
+                    return;
+                }
+                resetToLock();   // drop the in-memory session WITHOUT re-encrypting over the imported data
+                sfx('success');
+                showToast("backup restored. enter its pin.");
+            };
+            reader.readAsText(file);
+            input.value = '';   // lets you re-select the same file later
+        }
+
+        function escapeHtml(str) { return str.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#039;"); }
+    </script>
+</body>
+</html>
